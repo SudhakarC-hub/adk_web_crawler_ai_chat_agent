@@ -1,11 +1,30 @@
 """
-ADK Web Crawling Agent - LiteLLM + Ollama Integration
+ADK Web Crawling Agent - Model-Agnostic Implementation
 Compatible with: adk run, adk web, adk local runner
+Supports: Ollama, OpenAI GPT, Anthropic Claude, Google Gemini
 
-This agent uses Google ADK framework with LiteLLM to connect to Ollama self-hosted models.
+This agent uses Google ADK framework with flexible model support via LiteLLM.
 
 Environment Setup:
-    export OLLAMA_API_BASE="http://localhost:11434"
+    # For Ollama (self-hosted, no API key)
+    export MODEL_PROVIDER=ollama
+    export MODEL_NAME=mistral
+    export OLLAMA_API_BASE=http://localhost:11434
+    
+    # For OpenAI GPT
+    export MODEL_PROVIDER=openai
+    export MODEL_NAME=gpt-4
+    export OPENAI_API_KEY=your_key_here
+    
+    # For Anthropic Claude
+    export MODEL_PROVIDER=anthropic
+    export MODEL_NAME=claude-3-sonnet-20240229
+    export ANTHROPIC_API_KEY=your_key_here
+    
+    # For Google Gemini (via ADK native support)
+    export MODEL_PROVIDER=gemini
+    export MODEL_NAME=gemini-2.0-flash-exp
+    export GOOGLE_API_KEY=your_key_here
     
 Usage:
     # CLI: adk run adk_agent
@@ -21,12 +40,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from google.adk.agents.llm_agent import Agent
-from google.adk.models.lite_llm import LiteLlm
 from web_utils import fetch_webpage_content
 from config import Config
 
 # Storage for webpage content (in-memory, shared across sessions)
 webpage_storage = {}
+
+# Get model configuration from environment
+MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "ollama").lower()
+MODEL_NAME = os.getenv("MODEL_NAME", "mistral")
 
 SYSTEM_INSTRUCTION = """You are a helpful AI assistant with webpage fetching capabilities.
 
@@ -138,13 +160,52 @@ def get_stored_content() -> str:
     return webpage_storage.get("content", "")
 
 
-# Create the ADK agent with LiteLLM + Ollama
-# Using ollama_chat provider (recommended over 'ollama' provider to avoid infinite loops)
-# Environment variable OLLAMA_API_BASE must be set
+def create_model():
+    """
+    Create the appropriate model based on MODEL_PROVIDER environment variable.
+    Supports: ollama, openai, anthropic, gemini
+    
+    Returns:
+        Model instance configured for the specified provider
+    """
+    provider = MODEL_PROVIDER
+    model_name = MODEL_NAME
+    
+    if provider == "gemini":
+        # Use ADK's native Gemini model
+        from google.adk.models.gemini import Gemini
+        print(f"🤖 Initializing Gemini model: {model_name}")
+        return Gemini(model=model_name)
+    
+    else:
+        # Use LiteLLM for all other providers (ollama, openai, anthropic, etc.)
+        from google.adk.models.lite_llm import LiteLlm
+        
+        # Map providers to LiteLLM format
+        if provider == "ollama":
+            # Use ollama_chat provider for better compatibility
+            litellm_model = f"ollama_chat/{model_name}"
+            print(f"🦙 Initializing Ollama model: {model_name}")
+        elif provider == "openai":
+            litellm_model = model_name  # e.g., "gpt-4", "gpt-3.5-turbo"
+            print(f"🔵 Initializing OpenAI model: {model_name}")
+        elif provider == "anthropic":
+            litellm_model = model_name  # e.g., "claude-3-sonnet-20240229"
+            print(f"🟣 Initializing Anthropic Claude model: {model_name}")
+        else:
+            # Generic LiteLLM format
+            litellm_model = f"{provider}/{model_name}"
+            print(f"⚙️ Initializing {provider} model: {model_name}")
+        
+        return LiteLlm(model=litellm_model)
+
+
+# Create the ADK agent with flexible model support
+# Model is determined by MODEL_PROVIDER and MODEL_NAME environment variables
 root_agent = Agent(
-    model=LiteLlm(model="ollama_chat/mistral"),  # Use LiteLLM with Ollama
-    name="adk_web_crawler",
-    description="AI assistant that fetches webpages and answers questions based on their content using ADK + Ollama",
+    model=create_model(),  # Model-agnostic initialization
+    name="web_crawler",  # Agent name (not app name)
+    description="AI assistant that fetches webpages and answers questions based on their content using ADK framework",
     instruction=SYSTEM_INSTRUCTION,
     tools=[
         fetch_and_store_webpage,  # ADK automatically wraps as FunctionTool

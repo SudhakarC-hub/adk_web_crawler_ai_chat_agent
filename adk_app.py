@@ -46,31 +46,25 @@ def initialize_session_state():
     if "adk_session_service" not in st.session_state:
         st.session_state.adk_session_service = InMemorySessionService()
     
-    if "adk_session" not in st.session_state:
-        # Create session synchronously - InMemorySessionService doesn't use async
-        session_service = st.session_state.adk_session_service
-        # Try to get or create session directly
-        try:
-            # Use a simple session ID
-            session_id = "streamlit_session_001"
-            # Check if session exists, if not it will be created by Runner
-            st.session_state.adk_session_id = session_id
-        except Exception as e:
-            st.error(f"Error initializing session: {e}")
-            st.session_state.adk_session_id = "default_session"
-    
     if "adk_runner" not in st.session_state:
+        # Use 'adk_agent' as app_name to match the module/folder name
         st.session_state.adk_runner = Runner(
             agent=root_agent,
-            app_name="ADKWebCrawler",
+            app_name="adk_agent",  # Must match the folder name where agent.py is located
             session_service=st.session_state.adk_session_service
         )
+    
+    if "adk_user_id" not in st.session_state:
+        st.session_state.adk_user_id = "streamlit_user"
+    
+    if "adk_session_id" not in st.session_state:
+        st.session_state.adk_session_id = "session_001"
 
 
 def ask_agent_with_context(question: str) -> str:
     """
-    Ask the agent a question with webpage context.
-    Uses direct Ollama call for reliable responses.
+    Ask the agent a question with webpage context using direct LiteLLM.
+    Model-agnostic approach that works reliably.
     
     Args:
         question: User's question
@@ -79,18 +73,19 @@ def ask_agent_with_context(question: str) -> str:
         Agent's response
     """
     try:
-        import ollama
+        import litellm
         
         # Get stored content
         content = webpage_storage.get("content", "")
         
-        # Check if this is a greeting or general question (not about the content)
+        # Check if this is a greeting or general question
         greetings = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']
         is_greeting = question.lower().strip() in greetings
         
         # Build context-aware prompt
         if content and not is_greeting:
-            prompt = f"""You are a helpful AI assistant. Answer the following question based ONLY on the provided webpage content.
+            # Include webpage content in the prompt for context-based Q&A
+            full_prompt = f"""Answer the following question based ONLY on the provided webpage content.
 
 Webpage Content:
 {content[:15000]}
@@ -99,52 +94,102 @@ Question: {question}
 
 Please provide a clear, concise answer based only on the information in the webpage content above. If the question cannot be answered from the webpage content, say so."""
         else:
-            # For greetings or when no content, just respond naturally
+            # For greetings or when no content, just use the question as-is
             if is_greeting:
-                prompt = f"{question}\n\nRespond briefly and offer to help answer questions about the loaded webpage."
+                full_prompt = f"{question}\n\nRespond briefly and offer to help answer questions about the loaded webpage."
             else:
-                prompt = question
+                full_prompt = question
         
-        # Call Ollama directly for reliable responses
-        response = ollama.chat(
-            model='mistral',
-            messages=[{
-                'role': 'user',
-                'content': prompt
-            }]
+        # Get model configuration
+        model_provider = os.getenv("MODEL_PROVIDER", "ollama").lower()
+        model_name = os.getenv("MODEL_NAME", "mistral")
+        
+        # Build model string for LiteLLM
+        if model_provider == "ollama":
+            model = f"ollama_chat/{model_name}"
+            api_base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+        elif model_provider == "openai":
+            model = model_name  # e.g., "gpt-4"
+            api_base = None
+        elif model_provider == "anthropic":
+            model = model_name  # e.g., "claude-3-sonnet-20240229"
+            api_base = None
+        elif model_provider == "gemini":
+            # For Gemini via LiteLLM
+            model = f"gemini/{model_name}"
+            api_base = None
+        else:
+            model = f"{model_provider}/{model_name}"
+            api_base = None
+        
+        # Call LiteLLM directly - works with all providers
+        response = litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": full_prompt}],
+            api_base=api_base if api_base else None,
+            temperature=0.7
         )
         
-        return response['message']['content']
+        return response.choices[0].message.content
         
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error: {str(e)}\n\nPlease ensure your model provider is running and configured correctly."
 
 
 def main():
     """Main Streamlit application."""
     initialize_session_state()
     
-    # Check Ollama connection
-    ollama_base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-    
     # Title
     st.title("🕷️ Web Crawling Chatbot")
-    st.markdown("*Powered by Google ADK + LiteLLM + Ollama (Mistral)*")
+    st.markdown("*Powered by Google ADK Framework (Model-Agnostic)*")
     
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # Ollama connection status
-        st.subheader("🦙 Ollama")
-        st.success("✅ Self-hosted (No API key needed)")
-        st.caption(f"Endpoint: {ollama_base}")
+        # Model Provider Status
+        model_provider = os.getenv("MODEL_PROVIDER", "ollama").lower()
+        model_name = os.getenv("MODEL_NAME", "mistral")
         
-        # Model info
-        st.subheader("🤖 Model")
-        model_name = os.getenv("OLLAMA_MODEL", "mistral")
-        st.info(f"Using: {model_name}")
-        st.caption("Local LLM via LiteLLM")
+        st.subheader("� Model Configuration")
+        
+        # Display provider-specific info
+        if model_provider == "ollama":
+            st.success("🦙 Ollama (Self-hosted)")
+            st.caption(f"Model: {model_name}")
+            ollama_base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+            st.caption(f"Endpoint: {ollama_base}")
+            st.info("✅ No API key required")
+        elif model_provider == "openai":
+            st.success("🔵 OpenAI GPT")
+            st.caption(f"Model: {model_name}")
+            has_key = bool(os.getenv("OPENAI_API_KEY"))
+            if has_key:
+                st.info("✅ API key configured")
+            else:
+                st.error("❌ OPENAI_API_KEY not set")
+        elif model_provider == "anthropic":
+            st.success("🟣 Anthropic Claude")
+            st.caption(f"Model: {model_name}")
+            has_key = bool(os.getenv("ANTHROPIC_API_KEY"))
+            if has_key:
+                st.info("✅ API key configured")
+            else:
+                st.error("❌ ANTHROPIC_API_KEY not set")
+        elif model_provider == "gemini":
+            st.success("🔴 Google Gemini")
+            st.caption(f"Model: {model_name}")
+            has_key = bool(os.getenv("GOOGLE_API_KEY"))
+            if has_key:
+                st.info("✅ API key configured")
+            else:
+                st.error("❌ GOOGLE_API_KEY not set")
+        else:
+            st.warning(f"⚙️ {model_provider.upper()}")
+            st.caption(f"Model: {model_name}")
+        
+        st.caption("via LiteLLM + ADK")
         
         # ADK info
         st.subheader("ADK Framework")
@@ -163,8 +208,8 @@ def main():
         if st.button("🔄 Reset All", use_container_width=True):
             st.session_state.chat_history = []
             webpage_storage.clear()
-            # Reset session ID (Runner will handle session creation)
-            st.session_state.adk_session_id = "streamlit_session_001"
+            # Reset session (will be recreated by Runner on next interaction)
+            st.session_state.adk_session_id = "session_001"
             st.rerun()
     
     # Main content area

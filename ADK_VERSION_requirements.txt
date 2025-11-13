@@ -3,9 +3,6 @@ google-adk>=1.18.0
 google-genai>=1.0.0
 litellm>=1.65.5
 
-# LLM Backend
-ollama>=0.4.6
-
 # Frontend
 streamlit>=1.32.0
 

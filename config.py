@@ -14,9 +14,12 @@ load_dotenv()
 class Config:
     """Application configuration for Google ADK agent."""
     
-    # Model configurations
-    # Note: ADK primarily works with Gemini models, but can be extended
-    MODEL_BACKENDS = ["gemini", "ollama"]
+    # Model Provider Configuration (Model-Agnostic)
+    MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "ollama").lower()
+    MODEL_NAME = os.getenv("MODEL_NAME", "mistral")
+    
+    # Supported model backends
+    MODEL_BACKENDS = ["ollama", "openai", "anthropic", "gemini"]
     
     MODEL_OPTIONS = {
         "gemini": {
@@ -27,21 +30,38 @@ class Config:
                 "gemini-1.5-pro",
                 "gemini-2.5-flash"  # Latest model
             ],
-            "default": "gemini-2.0-flash",
+            "default": "gemini-2.0-flash-exp",
             "requires_api_key": True,
             "api_key_env": "GOOGLE_API_KEY"
         },
         "ollama": {
-            "models": ["mistral:latest", "llama2:latest", "codellama:latest", "gemma:latest", "phi:latest"],
-            "default": "mistral:latest",
+            "models": ["mistral", "llama2", "codellama", "gemma", "phi", "llama3", "qwen"],
+            "default": "mistral",
             "requires_api_key": False,
-            "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            "base_url": os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+        },
+        "openai": {
+            "models": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o"],
+            "default": "gpt-4",
+            "requires_api_key": True,
+            "api_key_env": "OPENAI_API_KEY"
+        },
+        "anthropic": {
+            "models": [
+                "claude-3-opus-20240229",
+                "claude-3-sonnet-20240229", 
+                "claude-3-haiku-20240307",
+                "claude-3-5-sonnet-20240620"
+            ],
+            "default": "claude-3-sonnet-20240229",
+            "requires_api_key": True,
+            "api_key_env": "ANTHROPIC_API_KEY"
         }
     }
     
-    # Default settings
-    DEFAULT_MODEL_BACKEND = os.getenv("DEFAULT_MODEL_BACKEND", "ollama")
-    DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "mistral")
+    # Default settings (backwards compatibility)
+    DEFAULT_MODEL_BACKEND = MODEL_PROVIDER
+    DEFAULT_MODEL_NAME = MODEL_NAME
     
     # Web scraping settings
     MAX_WORDS = int(os.getenv("MAX_WORDS", "25000"))
